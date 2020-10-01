@@ -1,0 +1,3 @@
+# Ignore the compiled binaries for clienftp and serverftp
+clientftp
+serverftp
