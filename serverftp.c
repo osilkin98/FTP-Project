@@ -1,4 +1,3 @@
-#pragma once
 /*
  * NOTE: Starting homework #2, add more comments here describing the overall function
  * performed by server ftp program
@@ -11,6 +10,9 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <string.h>
+#include <stdlib.h> /* for malloc/calloc/free */
+#include <stdio.h> /* for printf()/scanf() IO functions */
+#include <unistd.h> /* for close() */
 
 #define SERVER_FTP_PORT 4200
 
@@ -32,6 +34,12 @@ int svcInitServer(int *s);
 int sendMessage (int s, char *msg, int  msgSize);
 int receiveMessage(int s, char *buffer, int  bufferSize, int *msgSize);
 
+/* will add more commands as we go on */
+const char *CMD_LIST[] = {"help", "quit"};
+
+/* Returns information about a specific command, or lists the available 
+	commands if nothing is passed in */
+char * help(const char * arg);
 
 /* List of all global variables */
 
@@ -63,10 +71,7 @@ char replyMsg[1024];       /* buffer to send reply message to client */
  *	N			- Failed stauts, value of N depends on the command processed
  */
 
-int main(	
-	int argc,
-	char *argv[]
-	)
+int main(void)
 {
 	/* List of local varibale */
 
@@ -139,28 +144,49 @@ int main(
 
 		char temp[1024];          //tmp array
 		char *ptr;
-       
-		strcpy(temp, userCmd);    //copy ftp cmd into temp array
+
+		/* dynamically-allocated argument array */
+		char **args = NULL; 
+		size_t nargs = 0, args_cap = 1; 
+		args = malloc(sizeof(char *) * args_cap);
+
+		/* store the user command into a temp array */ 
+		strcpy(temp, userCmd); 
 		ptr = strtok(temp, " ");
-       
+
+		/* get the command */
         if (ptr != NULL){
-            strcpy(cmd, ptr);       //copy ptr to cmd
-            /* printf("Received command: [%s]\n", cmd); */
+            strcpy(cmd, ptr);       
         } else {
             printf("No command received!\n");
             continue;
         }
-           // cmd = strtok(userCmd, " ");   HOW IS THIS USED OR NO
-		ptr = strtok(NULL, " ");      //get the argument
-		if (ptr != NULL){
-            strcpy(argument, ptr);      //copy ftp arg to array
-		} else {
-            argument[0] = NULL;
-			printf("no argument\n");
-           
-		}
 
-		printf("Command: [%s]\nargs: [%s]\n", cmd, argument);
+		/* store each token within a dynamic array  */
+		while((ptr = strtok(NULL, " ")) != NULL) {
+			/* expand dong */
+			if(args_cap <= nargs) {
+				/* grow the array geometrically */
+				args_cap *= 2;
+				args = realloc(args, sizeof(char *) * args_cap);
+			}
+
+			/* store the pointer and increment the arg count */
+			args[nargs] = ptr;
+			nargs++; 
+		}  
+
+		/* print them out here and reset */
+		printf("Command: [%s]\n", cmd);
+		/* return the memory we used */
+		printf("args: ");
+		for(size_t i = 0; i < nargs; i++) {
+			printf("[%s] ", args[i]);
+		}
+		free(args);
+		args_cap = nargs = 0; 
+		args = NULL;
+
 
 	    /*
  	     * ftp server sends only one reply message to the client for 

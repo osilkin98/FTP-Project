@@ -1,4 +1,4 @@
-#pragma once // krishna how did you forget this...
+// krishna how did you forget this...
 /* 
  * Client FTP program
  *
@@ -14,6 +14,7 @@
 #include <netdb.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h> 
 
 #define SERVER_FTP_PORT 4200
 #define PROMPT "ftp> " 
@@ -66,10 +67,7 @@ char replyMsg[BUFFER_SIZE];    /* buffer to receive reply message from server */
  *	N	- Failed status, value of N depends on the function called or cmd processed
  */
 
-int main(	
-	int argc,
-	char *argv[]
-	)
+int main(void)
 {
 	/* List of local varibale */
 
@@ -113,25 +111,16 @@ int main(
 			printf("%s",PROMPT);
 		} while((ptr = fgets(userCmd, BUFFER_SIZE, stdin)) == NULL); 
 
-		/* time to split the input */
-		char to_send[BUFFER_SIZE];
-		ptr = NULL; /* zero the pointer */
+		/* */ 
+		for(register size_t i = 0; userCmd[i] != '\0'; i++) {
+			if(userCmd[i] == '\n') {
+				userCmd[i] = '\0';
+			}
+		}
 
-		/* get the client command */
-		ptr = strtok(userCmd, " \n");
-		strcpy(cmd, ptr);
-
-		/* record the arguments, if any */
-		if ((ptr = strtok(NULL, " \n")) != NULL) 
-			strcpy(argument, ptr);
-		
-		strcpy(to_send, cmd);
-		strcat(to_send, " ");
-		strcat(to_send, argument);
-
-		printf("sending message: [%s]\n", to_send);
+		printf("sending message: [%s]\n", userCmd);
 		/* send the userCmd to the server */
-		status = sendMessage(ccSocket, to_send, strlen(to_send)+1);
+		status = sendMessage(ccSocket, userCmd, strlen(userCmd)+1);
 		if(status != OK)
 		{
 		    break;
