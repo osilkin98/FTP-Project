@@ -3,7 +3,7 @@ CC = gcc
 # -lsocket is required on the Unix server
 #  CFLAGS = -lsocket -lnsl -w
 
-CFLAGS = -lnsl -w
+CFLAGS = -lnsl -Wall -Wextra -Wpedantic -g
 
 
 all: clean clientftp serverftp
