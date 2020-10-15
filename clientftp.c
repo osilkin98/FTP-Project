@@ -1,3 +1,4 @@
+#pragma once // krishna how did you forget this...
 /* 
  * Client FTP program
  *
@@ -83,7 +84,7 @@ int main(
 	 /* Connect to client ftp*/
 	printf("Calling clntConnect to connect to the server\n");	/* changed text */
 
-	status=clntConnect("10.3.200.17", &ccSocket);
+	status=clntConnect("localhost", &ccSocket);
 	if(status != 0)
 	{
 		printf("Connection to server failed, exiting main. \n");
