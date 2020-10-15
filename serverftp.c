@@ -1,3 +1,4 @@
+#pragma once
 /*
  * NOTE: Starting homework #2, add more comments here describing the overall function
  * performed by server ftp program
@@ -94,7 +95,7 @@ int main(
 	}
 
 
-	printf("ftp server is waiting to accept connection\n");
+	printf("FTP Server is listening for new connections\n");
 
 	/* wait until connection request comes from client ftp */
 	ccSocket = accept(listenSocket, NULL, NULL);
@@ -132,9 +133,33 @@ int main(
  * Starting Homework#2 program to process all ftp commandsmust be added here.
  * See Homework#2 for list of ftp commands to implement.
  */
-	    /* Separate command and argument from userCmd */
-	    strcpy(cmd, userCmd);  /* Modify in Homework 2.  Use strtok function */
-	    strcpy(argument, "");  /* Modify in Homework 2.  Use strtok function */
+   /* Separate command and argument from userCmd */
+   		//strcpy(cmd, userCmd);  /* Modify in Homework 2.  Use strtok function */
+   		//strcpy(argument, "");  /* Modify in Homework 2.  Use strtok function */
+
+		char temp[1024];          //tmp array
+		char *ptr;
+       
+		strcpy(temp, userCmd);    //copy ftp cmd into temp array
+		ptr = strtok(temp, " ");
+       
+        if (ptr != NULL){
+            strcpy(cmd, ptr);       //copy ptr to cmd
+            printf("ftp command name is %s\n", cmd);
+        } else {
+            printf("Did not receive ftp command\n");
+            continue;
+        }
+           // cmd = strtok(userCmd, " ");   HOW IS THIS USED OR NO
+		ptr = strtok(NULL, " ");      //get the argument
+		if (ptr != NULL){
+            strcpy(argument, ptr);      //copy ftp arg to array
+			printf("argument is %s", argument);
+		} else {
+            argument[0] = NULL;
+			printf("no argument\n");
+           
+		}
 
 	    /*
  	     * ftp server sends only one reply message to the client for 
