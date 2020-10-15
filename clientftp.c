@@ -13,8 +13,10 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <string.h>
+#include <stdio.h>
 
 #define SERVER_FTP_PORT 4200
+#define PROMPT "ftp> " 
 
 /* Error and OK codes */
 #define OK 0
@@ -33,12 +35,14 @@ int sendMessage (int s, char *msg, int  msgSize);
 int receiveMessage(int s, char *buffer, int  bufferSize, int *msgSize);
 
 
+#define BUFFER_SIZE 1024
+
 /* List of all global variables */
 
-char userCmd[1024];	/* user typed ftp command line read from keyboard */
-char cmd[1024];		/* ftp command extracted from userCmd */
-char argument[1024];	/* argument extracted from userCmd */
-char replyMsg[1024];    /* buffer to receive reply message from server */
+char userCmd[BUFFER_SIZE];	/* user typed ftp command line read from keyboard */
+char cmd[BUFFER_SIZE];		/* ftp command extracted from userCmd */
+char argument[BUFFER_SIZE];	/* argument extracted from userCmd */
+char replyMsg[BUFFER_SIZE];    /* buffer to receive reply message from server */
 
 
 /*
@@ -102,16 +106,32 @@ int main(
 
 	do
 	{
-		printf("my ftp> ");
-		strcpy(userCmd, "quit");  /* This statement must be replaced in homework #2 */
-				/* to read the command from the user. Use gets or readln function */
-		
-	        /* Separate command and argument from userCmd */
-	        strcpy(cmd, userCmd);  /* Modify in Homework 2.  Use strtok function */
-	        strcpy(argument, "");  /* Modify in Homework 2.  Use strtok function */
+		char *ptr = NULL;   	
 
+		/* read user input */
+		do {
+			printf("%s",PROMPT);
+		} while((ptr = fgets(userCmd, BUFFER_SIZE, stdin)) == NULL); 
+
+		/* time to split the input */
+		char to_send[BUFFER_SIZE];
+		ptr = NULL; /* zero the pointer */
+
+		/* get the client command */
+		ptr = strtok(userCmd, " \n");
+		strcpy(cmd, ptr);
+
+		/* record the arguments, if any */
+		if ((ptr = strtok(NULL, " \n")) != NULL) 
+			strcpy(argument, ptr);
+		
+		strcpy(to_send, cmd);
+		strcat(to_send, " ");
+		strcat(to_send, argument);
+
+		printf("sending message: [%s]\n", to_send);
 		/* send the userCmd to the server */
-		status = sendMessage(ccSocket, userCmd, strlen(userCmd)+1);
+		status = sendMessage(ccSocket, to_send, strlen(to_send)+1);
 		if(status != OK)
 		{
 		    break;

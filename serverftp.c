@@ -145,21 +145,22 @@ int main(
        
         if (ptr != NULL){
             strcpy(cmd, ptr);       //copy ptr to cmd
-            printf("ftp command name is %s\n", cmd);
+            /* printf("Received command: [%s]\n", cmd); */
         } else {
-            printf("Did not receive ftp command\n");
+            printf("No command received!\n");
             continue;
         }
            // cmd = strtok(userCmd, " ");   HOW IS THIS USED OR NO
 		ptr = strtok(NULL, " ");      //get the argument
 		if (ptr != NULL){
             strcpy(argument, ptr);      //copy ftp arg to array
-			printf("argument is %s", argument);
 		} else {
             argument[0] = NULL;
 			printf("no argument\n");
            
 		}
+
+		printf("Command: [%s]\nargs: [%s]\n", cmd, argument);
 
 	    /*
  	     * ftp server sends only one reply message to the client for 

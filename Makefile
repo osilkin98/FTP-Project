@@ -6,14 +6,16 @@ CC = gcc
 CFLAGS = -lnsl -w
 
 
-all: client server
+all: clean clientftp serverftp
 
-server: serverftp.c 
+serverftp: serverftp.c
 	$(CC) serverftp.c -o serverftp $(CFLAGS)
 
-client: clientftp.c server
+clientftp: clientftp.c serverftp
 	$(CC) clientftp.c -o clientftp $(CFLAGS)
 
 
 clean:
-	rm clientftp serverftp
+	- rm clientftp 2> /dev/null
+	- rm serverftp 2> /dev/null
+
