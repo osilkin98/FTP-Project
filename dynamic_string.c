@@ -29,3 +29,18 @@ void string_set(char** destination, char* value) {
       strcpy(*destination, value);
     }
 }
+
+/* Appends the contents of src to dest, reallocating when necessary */
+int dyn_concat(char** dest, const char *src) {
+    size_t curr_len = strlen(*dest);
+    size_t extra_len = strlen(src);
+
+    *dest = realloc(*dest, sizeof(char) * (curr_len + extra_len + 1));
+
+    if (*dest == NULL) {
+      return 1;
+    }
+    strcat(*dest, src);
+    return 0;
+
+}

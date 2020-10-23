@@ -29,4 +29,7 @@ void string_free(char **string_ptr);
     */
 void string_set(char **destination, char *value);
 
+/* Appends the contents of src to dest, reallocating when necessary */
+int dyn_concat(char **dest, const char *src);
+
 #endif
