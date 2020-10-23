@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h> 
+#include <stdlib.h>
 
 #define SERVER_FTP_PORT 4200
 #define PROMPT "ftp> " 
@@ -104,7 +105,11 @@ int main(void)
 
 	do
 	{
+		char temp[1024]; /* temp array to store buffer */ 
 		char *ptr = NULL;   	
+		char **args = NULL; 
+		size_t nargs = 0, args_cap = 1;
+		args = malloc(sizeof(char *) * args_cap);
 
 		/* read user input */
 		do {
@@ -117,6 +122,29 @@ int main(void)
 				userCmd[i] = '\0';
 			}
 		}
+
+		/* extract the command */
+		strcpy(temp, userCmd);
+		ptr = strtok(temp, " ");
+		if (ptr != NULL)
+			strcpy(cmd, ptr); 
+
+		/* extract the arguments, if any */ 
+		while ((ptr = strtok(NULL, " ")) != NULL) {
+			if(args_cap <= nargs) {
+				args_cap *= 2;
+				args = realloc(args, sizeof(char *) * args_cap);
+			}
+			args[nargs] = ptr;
+			nargs++;
+		}
+
+		/* process the arguments and perform relevant functions here */ 
+		// todo: implement
+		
+		/* now free the argument pointer array */
+		free(args);
+		args = NULL;
 
 		printf("sending message: [%s]\n", userCmd);
 		/* send the userCmd to the server */
