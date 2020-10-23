@@ -13,6 +13,7 @@
 #include <stdlib.h> /* for malloc/calloc/free */
 #include <stdio.h> /* for printf()/scanf() IO functions */
 #include <unistd.h> /* for close() */
+#include "dynamic_string.h"
 
 #define SERVER_FTP_PORT 4200
 
@@ -36,10 +37,12 @@ int receiveMessage(int s, char *buffer, int  bufferSize, int *msgSize);
 
 /* will add more commands as we go on */
 const char *CMD_LIST[] = {"help", "quit"};
+#define NUM_CMDS 2
+
 
 /* Returns information about a specific command, or lists the available 
 	commands if nothing is passed in */
-char * help(const char * arg);
+char * help(const argc, const char **);
 
 /* List of all global variables */
 
@@ -71,7 +74,7 @@ char replyMsg[1024];       /* buffer to send reply message to client */
  *	N			- Failed stauts, value of N depends on the command processed
  */
 
-int main(void)
+int main(const int argc, const char ** argv)
 {
 	/* List of local varibale */
 
@@ -100,22 +103,22 @@ int main(void)
 	}
 
 
-	printf("FTP Server is listening for new connections\n");
+	printf("[server] FTP Server is listening for connections on socket %d\n", listenSocket);
 
 	/* wait until connection request comes from client ftp */
 	ccSocket = accept(listenSocket, NULL, NULL);
 
-	printf("Came out of accept() function \n");
+	printf("[server] Came out of accept() function \n");
 
 	if(ccSocket < 0)
 	{
-		perror("cannot accept connection:");
-		printf("Server ftp is terminating after closing listen socket.\n");
+		perror("[server] cannot accept connection:");
+		printf("[server] Server ftp is terminating after closing listen socket.\n");
 		close(listenSocket);  /* close listen socket */
 		return (ER_ACCEPT_FAILED);  // error exist
 	}
 
-	printf("Connected to client, calling receiveMsg to get ftp cmd from client \n");
+	printf("[server] Connected to client, calling receiveMsg to get ftp cmd from client \n");
 
 
 	/* Receive and process ftp commands from client until quit command.
@@ -128,19 +131,13 @@ int main(void)
  	    status=receiveMessage(ccSocket, userCmd, sizeof(userCmd), &msgSize);
 	    if(status < 0)
 	    {
-		printf("Receive message failed. Closing control connection \n");
-		printf("Server ftp is terminating.\n");
-		break;
+			printf("[server] Failed to receive the message. Closing control connection \n");
+			printf("[server] Server ftp is terminating.\n");
+			break;
 	    }
 
 
-/*
- * Starting Homework#2 program to process all ftp commandsmust be added here.
- * See Homework#2 for list of ftp commands to implement.
- */
-   /* Separate command and argument from userCmd */
-   		//strcpy(cmd, userCmd);  /* Modify in Homework 2.  Use strtok function */
-   		//strcpy(argument, "");  /* Modify in Homework 2.  Use strtok function */
+	   /* Separate command and argument from userCmd */
 
 		char temp[1024];          //tmp array
 		char *ptr;
@@ -158,7 +155,7 @@ int main(void)
         if (ptr != NULL){
             strcpy(cmd, ptr);       
         } else {
-            printf("No command received!\n");
+            printf("[server] No command received!\n");
             continue;
         }
 
@@ -174,17 +171,17 @@ int main(void)
 			/* store the pointer and increment the arg count */
 			args[nargs] = ptr;
 			nargs++; 
-		}  
-
-		/* print them out here and reset */
-		printf("Command: [%s]\n", cmd);
-		/* return the memory we used */
-		printf("args: ");
-		for(size_t i = 0; i < nargs; i++) {
-			printf("[%s] ", args[i]);
 		}
+
+		if(strcmp(cmd, "help") == 0) {
+			// valgrind should scrutinze this
+			char *helpstr = help(nargs, args);
+			strcpy(replyMsg, helpstr);
+			string_free(&helpstr);
+		}
+
+		/* reset the args list */ 
 		free(args);
-		args_cap = nargs = 0; 
 		args = NULL;
 
 
@@ -192,9 +189,15 @@ int main(void)
  	     * ftp server sends only one reply message to the client for 
 	     * each command received in this implementation.
 	     */
-	    strcpy(replyMsg,"200 cmd okay\n");  /* Should have appropriate reply msg starting HW2 */
+	    /* strcpy(replyMsg,"200 cmd okay\n"); */
+		/* Should have appropriate reply msg starting HW2 */
+
+
 	    status=sendMessage(ccSocket,replyMsg,strlen(replyMsg) + 1);	/* Added 1 to include NULL character in */
 				/* the reply string strlen does not count NULL character */
+		/* clear out the reply string for the next run */
+		strcpy(replyMsg, "");
+
 	    if(status < 0)
 	    {
 		break;  /* exit while loop */
@@ -202,13 +205,16 @@ int main(void)
 	}
 	while(strcmp(cmd, "quit") != 0);
 
-	printf("Closing control connection socket.\n");
+	printf("[server] Closing control connection socket.\n");
 	close (ccSocket);  /* Close client control connection socket */
 
-	printf("Closing listen socket.\n");
+	printf("[server] Stopping listen on socket %d... ", ccSocket);
+	fflush(stdout);
 	close(listenSocket);  /*close listen socket */
+	printf("[server] done\n");
 
-	printf("Existing from server ftp main \n");
+	if (status != 0) 
+		printf("[server] Server exited with non-zero status code: %d\n", status);
 
 	return (status);
 }
@@ -377,6 +383,18 @@ int receiveMessage (
 }
 
 
+/**************** FTP COMMANDS **************/
+char * help(const int arg_count, const char **args_list) {
+	char *response;
+	string_init(&response);
+	string_set(&response, "List of available commands:\n");
 
+	for (size_t i = 0; i < NUM_CMDS; i++) {
+		dyn_concat(&response, CMD_LIST[i]);
+		dyn_concat(&response, "\n");
+	}
+
+	return response; 
+}
 
 
