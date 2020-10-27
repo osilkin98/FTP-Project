@@ -31,22 +31,44 @@
 /* succ hahaha */ 
 #define OK_SERVER_SUCC "200 The requested action has been successfully completed.\r\n"
 #define OK_HELP "214 List of server commands is as follows:\r\n"
+#define OK_CLOSING_CONTROL_CONN "221 Service closing control connection.\r\n"
+#define OK_USERNAME_NEED_PWORD "331 password required for %s\r\n"
+
+#define ERR_COMMAND_NOT_FOUND "500 Syntax error, command unrecognized and the requested action did not take place. This may include errors such as command line too long.\r\n"
+#define ERR_PARAM_SYNTAX_ERR "501 Syntax error in parameters or arguments.\r\n"
+#define ERR_FAILED_TO_LOGIN "530 Failed to login\r\n"
+#define ERR_NOT_LOGGED_IN "530 Not Logged In.\r\n"
+
+
+/* login state */
+#define SESH_LOGGED_OUT 0
+#define SESH_USER 1
+#define SESH_GUEST 2
+
+#define USER_GUEST "guest"
+#define USERNAME_LENGTH 32
+
+
+/* will add more commands as we go on */
+const char *CMD_LIST[] = {"help", "quit", "user"};
+#define NUM_CMDS 3
 
 
 /* Function prototypes */
-
 int svcInitServer(int *s);
 int sendMessage (int s, char *msg, int  msgSize);
 int receiveMessage(int s, char *buffer, int  bufferSize, int *msgSize);
 
-/* will add more commands as we go on */
-const char *CMD_LIST[] = {"help", "quit"};
-#define NUM_CMDS 2
 
 
 /* Returns information about a specific command, or lists the available 
 	commands if nothing is passed in */
-char * help(const argc, const char **);
+char * help(const argc, const char **, char *replyStr);
+
+/* Checks if the user credentials are correct, returns 1 if successful, 0 otherwise 
+	Obviously this is not cryptographically secure and should not be treated as such
+*/
+int login(const char *user, const char *pword, const int allow_guest, int *logged_in);
 
 /* List of all global variables */
 
@@ -87,43 +109,66 @@ int main(const int argc, const char ** argv)
 	int ccSocket;        /* Control connection socket - to be used in all client communication */
 	int status;
 
-	
+
+	int require_login = 0; 
+	int allow_guest = 0;
+
+	/* Parse arguments */
+	if (argc > 1) {
+		for (int i = 1; i < argc; i++) {
+			if(strcmp(argv[i], "--require-login") == 0) {
+				require_login = 1;
+				printf("[server]: starting with logins required\r\n");
+			}
+
+			if(strcmp(argv[i], "--allow-guest") == 0) {
+				allow_guest = 1;
+				printf("[server]: guest logins enabled, guest account: %s\r\n", USER_GUEST);
+			}
+		}
+	}
+
 	/*
 	 * NOTE: without \r\r\n at the end of format string in printf,
          * UNIX will buffer (not flush)
 	 * output to display and you will not see it on monitor.
 	*/
-	printf("Started execution of server ftp\r\n");
+	printf("[server]: Started execution of server ftp\r\n");
 
 
 	 /*initialize server ftp*/
-	printf("Initialize ftp server\r\n");	/* changed text */
+	printf("[server]: Initialize ftp server\r\n");	/* changed text */
 
 	status=svcInitServer(&listenSocket);
 	if(status != 0)
 	{
-		printf("Exiting server ftp due to svcInitServer returned error\r\n");
+		printf("[server]: Exiting server ftp due to svcInitServer returned error\r\n");
 		exit(status);
 	}
 
 
-	printf("[server] FTP Server is listening for connections on socket %d\r\n", listenSocket);
+	printf("[server]: FTP Server is listening for connections on socket %d\r\n", listenSocket);
 
 
 	int connection_no = 0;
 
 	/* wait until connection request comes from client ftp */
 	while(connection_no < 3) {
+
+		int should_quit = 0;
+		int logged_in = 0;
+		char username[USERNAME_LENGTH];
+
+
 		ccSocket = accept(listenSocket, NULL, NULL);
 
-		char should_quit = 0;
 
-		printf("[server] Came out of accept() function \r\n");
+		printf("[server]: Came out of accept() function \r\n"); 
 
 		if(ccSocket < 0)
 		{
-			perror("[server] cannot accept connection:");
-			printf("[server] Server ftp is terminating after closing listen socket.\r\n");
+			perror("[server]: cannot accept connection:");
+			printf("[server]: Server ftp is terminating after closing listen socket.\r\n");
 			close(listenSocket);  /* close listen socket */
 			return (ER_ACCEPT_FAILED);  // error exist
 		}
@@ -185,15 +230,50 @@ int main(const int argc, const char ** argv)
 				nargs++; 
 			}
 
-			/* basic-ass command matching, future version should either use a switch or a prefix trie */ 
+			printf("[server]: Received cmd: [%s] ", cmd);
+			for(size_t i = 0; i < nargs; i++) {
+				printf("[%s] ", args[i]);
+			}
+			printf("\r\n");
+			fflush(stdout);
+
+			/* basic command matching, future version should either use a switch or a prefix trie */ 
 			if(strcmp(cmd, "help") == 0) {
 				// valgrind should scrutinze this
-				char *helpstr = help(nargs, args);
-				strcpy(replyMsg, helpstr);
-				string_free(&helpstr);
+				help(nargs, args, replyMsg);
 			} else if(strcmp(cmd, "quit") == 0) {
-				strcpy(replyMsg, OK_SERVER_SUCC);
+				/* logout here */
+				if(logged_in) {
+					printf("[server]: logging out... ");
+					fflush(stdout);
+					strcpy(username, "");
+					logged_in = SESH_LOGGED_OUT;
+					printf("done\r\n");
+				}
+				strcpy(replyMsg, OK_CLOSING_CONTROL_CONN);
 				should_quit = 1;
+			} else if (strcmp(cmd, "user") == 0) {
+				/* get the username */ 
+				if (nargs == 0) {
+					printf("[server] user did not provide a username\r\n");
+					strcpy(replyMsg, ERR_PARAM_SYNTAX_ERR);
+				} else {
+					char *_user = args[0];
+					printf("[server]: '%s' is attempting to login\r\n", _user);
+					if(login(_user, NULL, allow_guest, &logged_in)) {
+						strcpy(username, _user);
+						printf("[server]: '%s' has logged in\r\n", username);
+						strcpy(replyMsg, "230 Successful login\r\n");
+					} else {
+						printf("[server]: unsuccessful login attempt for %s\r\n", _user);
+						strcpy(replyMsg, ERR_FAILED_TO_LOGIN);
+					}
+				}
+
+
+			} else {
+				/* the command isn't recognized */
+				strcpy(replyMsg, ERR_COMMAND_NOT_FOUND);
 			}
 
 
@@ -404,7 +484,7 @@ int receiveMessage (
 
 
 /**************** FTP COMMANDS **************/
-char * help(const int arg_count, const char **args_list) {
+char * help(const int arg_count, const char **args_list, char *reply_str) {
 	char *response;
 	string_init(&response);
 	string_set(&response, OK_HELP);
@@ -413,8 +493,20 @@ char * help(const int arg_count, const char **args_list) {
 		dyn_concat(&response, CMD_LIST[i]);
 		dyn_concat(&response, "\r\r\r\n");
 	}
-
-	return response; 
+	strcpy(reply_str, response);
+	string_free(&response);
+	return reply_str; 
 }
 
 
+/* TODO: implement user sessions */
+int login(const char *username, const char *pword, const int allow_guest, int *logged_in) {
+	if(allow_guest) {
+		printf("[server] logged in as %s\r\n", USER_GUEST);
+		*logged_in = SESH_GUEST;
+	} else {
+		printf("[server] user login not implemented yet\r\n");
+		*logged_in = SESH_LOGGED_OUT;
+	}
+	return *logged_in;
+}
