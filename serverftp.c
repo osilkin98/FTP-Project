@@ -46,8 +46,24 @@
 #define SESH_GUEST 2
 
 #define USER_GUEST "guest"
-#define USERNAME_LENGTH 32
 
+/* set the username length based on what each UNIX system defines */
+
+#if defined(__linux__) || defined(__gnu_linux__)
+	#define USERNAME_LENGTH 32  /* Linux max username length set to 32 */
+#elif defined(sun) || defined(__sun)
+	#if defined(__SunOS_5_11)
+		#define USERNAME_LENGTH 12  /* SunOS 5.11 can handle usernames 12 chars in len, however an override must be made */ 
+	#else
+		#define USERNAME_LENGTH 8  /* standard SunOS has a maximum of 8 technically */ 
+	#endif
+#elif defined(_WIN32) || defined(_WIN16) || defined(_WIN64) || defined(__WINDOWS__) || defined(__TOS_WIN__) || defined(__WIN32__)
+	#define USERNAME_LENGTH 20
+#elif (defined(__APPLE__) && defined(__MACH__)) || defined(macintosh)
+	#define USERNAME_LENGTH 20
+#elif defined(__unix__) || defined(__unix)
+	#define USERNAME_LENGTH 8 /* generic unix definition */ 
+#endif
 
 /* will add more commands as we go on */
 const char *CMD_LIST[] = {"help", "quit", "user"};
@@ -157,7 +173,7 @@ int main(const int argc, const char ** argv)
 
 		int should_quit = 0;
 		int logged_in = 0;
-		char username[USERNAME_LENGTH];
+		char username[USERNAME_LENGTH]; 
 
 
 		ccSocket = accept(listenSocket, NULL, NULL);
