@@ -42,5 +42,4 @@ int dyn_concat(char** dest, const char *src) {
     }
     strcat(*dest, src);
     return 0;
-
 }
