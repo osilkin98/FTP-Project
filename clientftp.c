@@ -37,7 +37,7 @@ int sendMessage (int s, char *msg, int  msgSize);
 int receiveMessage(int s, char *buffer, int  bufferSize, int *msgSize);
 
 
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 4096
 
 /* List of all global variables */
 
@@ -156,6 +156,8 @@ int main(void)
 
 		/* Receive reply message from the the server */
 		status = receiveMessage(ccSocket, replyMsg, sizeof(replyMsg), &msgSize);
+		printf("[client]: received %d bytes from the server\r\n", msgSize);
+		
 		if(status != OK)
 		{
 		    break;
