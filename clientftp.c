@@ -18,6 +18,7 @@
 #include <stdlib.h>
 
 #define SERVER_FTP_PORT 4200
+#define DATA_CONNECTION_PORT 4201
 #define PROMPT "ftp> " 
 
 /* Error and OK codes */
@@ -71,10 +72,12 @@ char replyMsg[BUFFER_SIZE];    /* buffer to receive reply message from server */
 int main(void)
 {
 	/* List of local varibale */
-
+	int client_listen_socket;  /* client socket to listen for connections on */
+	int data_socket; 	/* Data Connection socket - to be used in all server communications */
 	int ccSocket;	/* Control connection socket - to be used in all client communication */
 	int msgSize;	/* size of the reply message received from the server */
 	int status = OK;
+
 
 	/*
 	 * NOTE: without \n at the end of format string in printf,
@@ -93,8 +96,26 @@ int main(void)
 		printf("Connection to server failed, exiting main. \n");
 		return (status);
 	}
+	/* We connected to the server so lets receive the welcome message */
+	else {
+		status = receiveMessage(ccSocket, replyMsg, sizeof(replyMsg), &msgSize);
+		printf(replyMsg);
+	}
 
+	/* Now that the client connected to the FTP server, 
+		we can initialize the clientside data connection */
+	/*
+	status = svcInitServer(&client_listen_socket, DATA_CONNECTION_PORT);
+	if (status != 0) 
+	{
+		fprintf(stderr, "[client]: could not start data connection server\r\n");
+		exit(status);
+	}
+	printf("[client]: data connection bound to socket %d\r\n", data_socket);
+	printf("[client]: intialized server for data connections, we can safely proceed\r\n");
+	*/
 
+	
 	/* 
 	 * Read an ftp command with argument, if any, in one line from user into userCmd.
 	 * Copy ftp command part into ftpCmd and the argument into arg array.
@@ -105,48 +126,44 @@ int main(void)
 
 	do
 	{
-		char temp[1024]; /* temp array to store buffer */ 
+		char temp[1024]; /* temp array to store buffer */
 		char *ptr = NULL;   	
-		char **args = NULL; 
-		size_t nargs = 0, args_cap = 1;
-		args = malloc(sizeof(char *) * args_cap);
+		int ftp_code;
 
 		/* read user input */
 		do {
+			/* displays "ftp> " or whatever other prompt */
 			printf("%s",PROMPT);
+
+        /* read at most BUFFER_SIZE bytes from the `stdin` stream and write to userCmd */   
 		} while((ptr = fgets(userCmd, BUFFER_SIZE, stdin)) == NULL); 
 
-		/* */ 
-		for(register size_t i = 0; userCmd[i] != '\0'; i++) {
+		/* Replace any newline characters with a null terminator */ 
+		for(register size_t i = 0; i < strlen(userCmd); i++) {
 			if(userCmd[i] == '\n') {
 				userCmd[i] = '\0';
+				break;
 			}
 		}
 
-		/* extract the command */
+		/* place the command into a temp buffer so we can tokenize it  */
 		strcpy(temp, userCmd);
-		ptr = strtok(temp, " ");
-		if (ptr != NULL)
-			strcpy(cmd, ptr); 
 
-		/* extract the arguments, if any */ 
-		while ((ptr = strtok(NULL, " ")) != NULL) {
-			if(args_cap <= nargs) {
-				args_cap *= 2;
-				args = realloc(args, sizeof(char *) * args_cap);
-			}
-			args[nargs] = ptr;
-			nargs++;
+		/* extract the user command and argument */
+		ptr = strtok(temp, " ");
+		if (ptr != NULL) {
+			strcpy(cmd, ptr); 
+			
+			if ((ptr = strtok(NULL, " "))) 
+				strcpy(argument, ptr);
+
+		}
+		else {
+			fprintf(stderr, "[client]: no command was entered\r\n");
+			continue;
 		}
 
-		/* process the arguments and perform relevant functions here */ 
-		// todo: implement
-		
-		/* now free the argument pointer array */
-		free(args);
-		args = NULL;
 
-		printf("sending message: [%s]\n", userCmd);
 		/* send the userCmd to the server */
 		status = sendMessage(ccSocket, userCmd, strlen(userCmd)+1);
 		if(status != OK)
@@ -154,10 +171,15 @@ int main(void)
 		    break;
 		}
 
+		
 		/* Receive reply message from the the server */
 		status = receiveMessage(ccSocket, replyMsg, sizeof(replyMsg), &msgSize);
-		printf("[client]: received %d bytes from the server\r\n", msgSize);
+
+
+		clntExtractReplyCode(replyMsg, &ftp_code);
 		
+		printf("[client]: received %d bytes from the server\r\n", msgSize);
+		printf("[client]: server status code: %d\r\n", ftp_code);
 		if(status != OK)
 		{
 		    break;
@@ -262,6 +284,84 @@ int clntConnect (
 
 	return(OK); /* successful return */
 }  // end of clntConnect() */
+
+/*
+ * svcInitServer
+ *
+ * Function to create a socket and to listen for connection request from client
+ *    using the created listen socket.
+ *
+ * Parameters
+ * s		- Socket to listen for connection request (output)
+ * port		- Port number this server will listen on
+ * 
+ * Return status
+ *	OK			- Successfully created listen socket and listening
+ *	ER_CREATE_SOCKET_FAILED	- socket creation failed
+ */
+
+int svcInitServer (
+	int *s, 		/*Listen socket number returned from this function */
+	int port
+	)
+{
+	int sock;
+	struct sockaddr_in svcAddr;
+	int qlen;
+
+	/*create a socket endpoint */
+	if( (sock=socket(AF_INET, SOCK_STREAM,0)) <0)
+	{
+		perror("cannot create socket");
+		return(ER_CREATE_SOCKET_FAILED);
+	}
+
+	/*initialize memory of svcAddr structure to zero. */
+	memset((char *)&svcAddr,0, sizeof(svcAddr));
+
+	/* initialize svcAddr to have server IP address and server listen port#. */
+	printf("Initializing server on port %d\r\n", port);
+	svcAddr.sin_family = AF_INET;
+	svcAddr.sin_addr.s_addr=htonl(INADDR_ANY);  /* server IP address */
+	svcAddr.sin_port=htons(port);    /* server listen port # */
+
+	/* bind (associate) the listen socket number with server IP and port#.
+	 * bind is a socket interface function 
+	 */
+	if(bind(sock,(struct sockaddr *)&svcAddr,sizeof(svcAddr))<0)
+	{
+		perror("cannot bind");
+		close(sock);
+		return(ER_BIND_FAILED);	/* bind failed */
+	}
+
+	/* 
+	 * Set listen queue length to 1 outstanding connection request.
+	 * This allows 1 outstanding connect request from client to wait
+	 * while processing current connection request, which takes time.
+	 * It prevents connection request to fail and client to think server is down
+	 * when in fact server is running and busy processing connection request.
+	 */
+	qlen=1; 
+
+
+	/* 
+	 * Listen for connection request to come from client ftp.
+	 * This is a non-blocking socket interface function call, 
+	 * meaning, server ftp execution does not block by the 'listen' funcgtion call.
+	 * Call returns right away so that server can do whatever it wants.
+	 * The TCP transport layer will continuously listen for request and
+	 * accept it on behalf of server ftp when the connection requests comes.
+	 */
+
+	listen(sock,qlen);  /* socket interface function call */
+
+	/* Store listen socket number to be returned in output parameter 's' */
+	*s=sock;
+
+	return(OK); /*successful return */
+}
+
 
 
 
