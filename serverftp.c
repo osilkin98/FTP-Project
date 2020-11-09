@@ -16,12 +16,12 @@
 #include <stdio.h> /* for printf()/scanf() IO functions */
 #include <unistd.h> /* for close(), getcwd(),  */
 #include <stdbool.h> /* includes macros for boolean datatypes and values instead of relying on int */
-#include "dynamic_string.h" /* for dynamic concatenation of strings */ 
+#include "dynamic_string.h" /* for dynamic concatenation of strings */
 #include <dirent.h> /* for using directory functions */
 #include <errno.h> /* for error handling */
 
 /* stores the error status from system functions, to be used for the code return logic  */
-extern int errno; 
+extern int errno;
 
 
 #define SERVER_FTP_PORT 4200
@@ -37,7 +37,7 @@ extern int errno;
 #define ER_RECEIVE_FAILED -6
 #define ER_ACCEPT_FAILED -7
 
-/* succ hahaha */ 
+/* succ hahaha */
 #define OK_SERVER_SUCC "200 The requested action has been successfully completed.\r\n"
 #define OK_HELP "214 List of server commands is as follows:\r\n"
 #define OK_CLOSING_CONTROL_CONN "221 Service closing control connection.\r\n"
@@ -45,7 +45,7 @@ extern int errno;
 
 #define ERR_COMMAND_NOT_FOUND "500 Syntax error, command unrecognized and the requested action did not take place. This may include errors such as command line too long.\r\n"
 #define ERR_PARAM_SYNTAX_ERR "501 Syntax error in parameters or arguments.\r\n"
-#define ERR_MISSING_ARGUMENT "501 No argument provided for command.\r\n" 
+#define ERR_MISSING_ARGUMENT "501 No argument provided for command.\r\n"
 #define ERR_FAILED_TO_LOGIN "530 Failed to login\r\n"
 #define ERR_NOT_LOGGED_IN "530 Not Logged In.\r\n"
 #define ERR_INTERNAL_ERROR "451 Requested action aborted. Local error in processing.\r\n"
@@ -54,8 +54,8 @@ extern int errno;
 
 /* login state */
 #define SESH_LOGGED_OUT 0
-#define SESH_USER 1
-#define SESH_GUEST 2
+#define SESH_LOGGING_IN 1
+#define SESH_LOGGED_IN 2
 
 #define USER_GUEST "guest"
 
@@ -65,21 +65,24 @@ extern int errno;
 	#define USERNAME_LENGTH 32  /* Linux max username length set to 32 */
 #elif defined(sun) || defined(__sun)
 	#if defined(__SunOS_5_11)
-		#define USERNAME_LENGTH 12  /* SunOS 5.11 can handle usernames 12 chars in len, however an override must be made */ 
+		#define USERNAME_LENGTH 12  /* SunOS 5.11 can handle usernames 12 chars in len, however an override must be made */
 	#else
-		#define USERNAME_LENGTH 8  /* standard SunOS has a maximum of 8 technically */ 
+		#define USERNAME_LENGTH 8  /* standard SunOS has a maximum of 8 technically */
 	#endif
 #elif defined(_WIN32) || defined(_WIN16) || defined(_WIN64) || defined(__WINDOWS__) || defined(__TOS_WIN__) || defined(__WIN32__)
 	#define USERNAME_LENGTH 20
 #elif (defined(__APPLE__) && defined(__MACH__)) || defined(macintosh)
 	#define USERNAME_LENGTH 20
 #elif defined(__unix__) || defined(__unix)
-	#define USERNAME_LENGTH 8 /* generic unix definition */ 
+	#define USERNAME_LENGTH 8 /* generic unix definition */
 #endif
 
-/* ON a UNIX system, the max length of a path is 4096 characters */ 
+/* ON a UNIX system, the max length of a path is 4096 characters */
 #define WORKINGPATH_MAX_LENGTH 4096
-#define BUFFER_LENGTH 4096
+#define BUFFER_LENGTH 4096  /* this needs to be reduced back to 1024 and pwd be sent over the data connection */
+
+/* Define a macro for the hostname */
+#define SERVER_HOSTNAME "localhost"  /* set to localhost when working from a local system */
 
 
 /* Commands to implement:
@@ -100,14 +103,14 @@ extern int errno;
 
 
 /* will add more commands as we go on */
-const char *CMD_LIST[] = { 
+const char *CMD_LIST[] = {
 	"user",	// implemented
-	"pass", 
+	"pass",
 	"pwd", //
-	"cd", // 
+	"cd", //
 	"ls",
 	"rm",
-	"mkdir", 
+	"mkdir",
 	"rmdir",
 	"stat",
 	"send",
@@ -117,23 +120,49 @@ const char *CMD_LIST[] = {
 };
 #define NUM_CMDS 13
 
+const char *GUEST_CMDS[] = {
+	"user", "pass", "stat", "help", "quit"
+};
+#define NUM_GUEST_CMDS 5
+
+
 const char *REQUIRE_ARGS[] = {
 	"user", "pass", "cd", "mkdir", "rmdir", "send", "recv"
 };
 #define NUM_REQUIRE_ARGS 7
 
+/* set the FTP server users here */
+const char *USERNAMES[] = {
+	"oleg",
+	"guest",
+	"ken",
+	"doug",
+	"jared"
+};
+
+const char *PASSWORDS[] = {
+	"password",
+	"guest",
+	"FactsAndLogic5",
+	"dragons",
+	"bballer23",
+};
+
+#define NUM_USERS 5
+
+
 /* Function prototypes */
 int svcInitServer(int *s);
 int sendMessage (int s, char *msg, int  msgSize);
 int receiveMessage(int s, char *buffer, int  bufferSize, int *msgSize);
+int clntConnect(char *serverName, int *);
 
 
-
-/* Returns information about a specific command, or lists the available 
+/* Returns information about a specific command, or lists the available
 	commands if nothing is passed in */
 char * help(char *replyStr);
 
-/* Checks if the user credentials are correct, returns 1 if successful, 0 otherwise 
+/* Checks if the user credentials are correct, returns 1 if successful, 0 otherwise
 	Obviously this is not cryptographically secure and should not be treated as such
 */
 int login(const char *user, const char *pword, const int allow_guest, int *logged_in);
@@ -143,7 +172,7 @@ char * get_cwd(char *replyStr, char *cd_buffer);
 
 
 /* Lists the files within the filepath specified by dir_buffer and copies them into replyStr */
-char * ls_dir(char *replyStr, char *dir_buffer, size_t buf_size); 
+char * ls_dir(char *replyStr, char *dir_buffer, size_t buf_size);
 
 /* List of all global variables */
 char userCmd[BUFFER_LENGTH];	/* user typed ftp command line received from client */
@@ -172,7 +201,7 @@ char working_dir[PATH_MAX];
  *		   Can use it if needed.
  *
  * Return status
- *	0			- Successful execution until QUIT command from client 
+ *	0			- Successful execution until QUIT command from client
  *	ER_ACCEPT_FAILED	- Accepting client connection request failed
  *	N			- Failed stauts, value of N depends on the command processed
  */
@@ -184,11 +213,12 @@ int main(const int argc, const char ** argv)
 	int msgSize;        /* Size of msg received in octets (bytes) */
 	int listenSocket;   /* listening server ftp socket for client connect request */
 	int ccSocket;        /* Control connection socket - to be used in all client communication */
+	int data_socket;  /* data connection socket */
 	int status;
+	int connection_no = 0; /* for exiting after a set amount of connections */
 
 	/* login settings */
-	bool require_login = false; 
-	bool allow_guest = false;
+	//bool require_login = false;
 
 
 	/* stores the working directory so the process can reset after every call */
@@ -196,18 +226,19 @@ int main(const int argc, const char ** argv)
 		perror("[server]: couldn't write directory to working_dir\r\n");
 	}
 
+	/* display the originating working directory */
+	printf("[server]: working_dir: %s\r\n", working_dir);
+
+
 	/* Parse arguments */
 	if (argc > 1) {
 		for (int i = 1; i < argc; i++) {
+			/*
 			if(strcmp(argv[i], "--require-login") == 0) {
 				require_login = true;
 				printf("[server]: starting with logins required\r\n");
 			}
-
-			if(strcmp(argv[i], "--allow-guest") == 0) {
-				allow_guest = true;
-				printf("[server]: guest logins enabled, guest account: %s\r\n", USER_GUEST);
-			}
+			*/
 		}
 	}
 
@@ -222,6 +253,8 @@ int main(const int argc, const char ** argv)
 	 /*initialize server ftp*/
 	printf("[server]: Initialize ftp server\r\n");	/* changed text */
 
+
+	/* Initialize the server and store the socket in listenSocket */
 	status=svcInitServer(&listenSocket);
 	if(status != 0)
 	{
@@ -233,30 +266,34 @@ int main(const int argc, const char ** argv)
 	printf("[server]: FTP Server is listening for connections on socket %d\r\n", listenSocket);
 
 
-	int connection_no = 0;
-
 	/* wait until connection request comes from client ftp */
 	while(connection_no < MAX_CONNECTION_COUNT) {
-		printf("[server]: working_dir: %s\r\n", working_dir);
+
+
+		/* track whether or not we should be logging out */
 		bool should_quit = false;
-		int logged_in = SESH_LOGGED_OUT; /* stores the login state of the user session */  
-		char username[USERNAME_LENGTH]; 
+
+		/* login information, required for establishing data connection if --require-login flag is set */
+		int logged_in = SESH_LOGGED_OUT; /* stores the login state of the user session */
+		char username[USERNAME_LENGTH]; /* pointer to the username */
+
+		/* used for directory switching */
 		char current_dir[PATH_MAX];
-	
+
 
 		/* reset the working directory to where the program runs */
-
 		if(chdir(working_dir) != 0) {
 			printf("[server]: unable to reset current_dir to %s\r\n", working_dir);
 			printf("[server]: current_dir: %s\r\n", current_dir);
 		}
 
+		/* reset the current_dir variable */
 		strcpy(current_dir, working_dir);
 		printf(" -> %s\r\n", current_dir);
 
 		ccSocket = accept(listenSocket, NULL, NULL);
 
-		printf("[server]: Came out of accept() function \r\n"); 
+		printf("[server]: Came out of accept() function \r\n");
 
 		if(ccSocket < 0)
 		{
@@ -266,17 +303,34 @@ int main(const int argc, const char ** argv)
 			return (ER_ACCEPT_FAILED);  // error exist
 		}
 
-		printf("[server] Connected to client, calling receiveMsg to get ftp cmd from client \r\n");
+		printf("[server] Connected to client, sending a welcome message \r\n");
+
+		/* attempt to send the welcome message, if it breaks then close the connection
+		 	and continue onto the next iteration of the loop */
+		sprintf(replyMsg, "\r\n~~220 Welcome to Oleg's FTP Server! Drinks are on the house!~~\r\n");
+		if(send(ccSocket, replyMsg, strlen(replyMsg) + 1, 0) < 0) {
+			fprintf(stderr, "[server]: failed to send welcome message!\r\n");
+			printf("[server]: closing control connection\r\n");
+			close(ccSocket);
+			connection_no++;
+			continue;
+		}
 
 
 		/* Receive and process ftp commands from client until quit command.
-		* On receiving quit command, send reply to client and 
-			* then close the control connection socket "ccSocket". 
+		* On receiving quit command, send reply to client and
+			* then close the control connection socket "ccSocket".
 		*/
 		do {
 
 			char temp[BUFFER_LENGTH];  /* the user command will be copied into this buffer so it can be parsed without breaking the original */
-			char *ptr;        /* pointer to be used when processing strtok */ 
+			char *ptr = NULL;   /* pointer to be used when processing strtok */
+			char *arg = NULL;	/* pointer to process & validate the argument */
+
+			/* For validating the user's command */
+			bool is_valid_cmd = false;
+			bool requires_args = false;
+			bool valid_perms = false;
 
 			/* Receive client ftp commands until */
 			status=receiveMessage(ccSocket, userCmd, sizeof(userCmd), &msgSize);
@@ -287,34 +341,101 @@ int main(const int argc, const char ** argv)
 				break;
 			}
 
-
-			/* 
+			/*
 				Parse the input received from the client
 			*/
 
 			strcpy(temp, userCmd); /* Store a copy of the passed commadn into the temp array */
-			strcpy(replyMsg, ""); /* clear out the reply message */ 
+			strcpy(replyMsg, ""); /* clear out the reply message */
 
-			char *arg = NULL;
 
-			/* get the command from the temp buffer */ 
+			/* get the command from the temp buffer */
 			ptr = strtok(temp, " ");
 
 			/* get the command */
 			if (ptr != NULL){
 				strcpy(cmd, ptr);
-				printf("[server]: received command [%s]\r\n", cmd);       
+				printf("[server]: received command [%s]\r\n", cmd);
 			} else {
 				printf("[server] No command received!\r\n");
 				continue;
 			}
-			
+
 			/* get the argument if any */
 			if ((arg = strtok(NULL, "\0")) != NULL) {
 				strcpy(argument, arg);
 				printf("[server]: Obtained arg: \"%s\"\r\n", argument);
 			}
-	
+
+			/*
+				Check that the entered command is within the
+				list of supported commands
+				and that it has an argument if required
+			*/
+			for (size_t i = 0; i < NUM_CMDS; i++) {
+
+				/* the command is supported by the server, but we need to check
+					that the user provided an argument if required
+				*/
+				if (strcmp(cmd, CMD_LIST[i]) == 0) {
+
+					/* user can access all commands if logged in  */
+					if (logged_in == SESH_LOGGED_IN) {
+						valid_perms = true;
+					}
+
+
+					/*
+						make sure that the user can't access modifying functions
+					   if they aren't logged in
+					*/
+					else {
+						/* the state is either LOGGED_OUT or LOGGING_IN so check to make sure that
+							the command entered is one of the guest commands
+						*/
+
+						for(size_t k = 0; k < NUM_GUEST_CMDS; k++) {
+
+							/* user is accessing one of the allowed commands */
+							if (strcmp(GUEST_CMDS[k], CMD_LIST[i]) == 0) {
+								valid_perms = true;
+								break;
+							}
+						}
+						/* break here if the user doesn't have the necessary permissions */
+						if (!valid_perms) {
+							printf("[server]: user tried accessing %s without being logged in\r\n", cmd);
+							strcpy(replyMsg, "530 You need to be logged in to use this command\r\n");
+							break;
+						}
+					}
+
+					/*
+						at this point it's established that the user has valid permissions
+						so we can safely proceed without issue
+					*/
+
+					for (size_t j = 0; j < NUM_REQUIRE_ARGS; j++) {
+						if (strcmp(cmd, REQUIRE_ARGS[j]) == 0) {
+							requires_args = true;
+						}
+					}
+
+					if(!requires_args || (requires_args && arg != NULL)) {
+						printf("[server]: command %s is valid\r\n", cmd);
+						is_valid_cmd = true;
+					}
+
+					else {
+						printf("[server]: no args provided for %s\r\n", cmd);
+						strcpy(replyMsg, ERR_MISSING_ARGUMENT);
+					}
+					break;
+				}
+			}
+
+			/*********** COMMANDS ********************/
+
 			/* Commands to implement:
 			// 	<user>	username
 			//	<pass> 	password
@@ -332,57 +453,78 @@ int main(const int argc, const char ** argv)
 
 			*/
 
-			/* Validate the user's command */
-			bool is_valid_cmd = false;
-			bool requires_args = false;
-			for (size_t i = 0; i < NUM_CMDS; i++) {
-				
-				/* the command is supported by the server, but we need to check 
-					that the user provided an argument if required 
-				*/
-				if (strcmp(cmd, CMD_LIST[i]) == 0) {
-					for (size_t j = 0; j < NUM_REQUIRE_ARGS; j++) {
-						if (strcmp(cmd, REQUIRE_ARGS[j]) == 0) {
-							requires_args = true;
-						}
-					}
-					if(!requires_args || (requires_args && arg != NULL)) {
-						printf("[server]: command %s is valid\r\n", cmd);
-						is_valid_cmd = true;
-					} else {
-						printf("[server]: no args provided for %s\r\n", cmd);
-						strcpy(replyMsg, ERR_MISSING_ARGUMENT);
-					}
 
-					break;
-				}
-			}
-			
-			
+
+
 			if (is_valid_cmd) {
 
 				int cmd_status = 0; /* Stores the return status from system() calls */
 				const char *error_msg = NULL; /* stores the error pointer from strerror(errno) */
 
 				if (strcmp(cmd, "user") == 0) {
-					/* get the username */ 
-					printf("[server]: '%s' is attempting to login\r\n", argument);
-					if(login(argument, NULL, allow_guest, &logged_in)) {
-						strcpy(username, argument);
-						printf("[server]: '%s' has logged in\r\n", username);
-						strcpy(replyMsg, "230 Successful login\r\n");
-					} else {
-						printf("[server]: unsuccessful login attempt for %s\r\n", argument);
-						strcpy(replyMsg, ERR_FAILED_TO_LOGIN);
+					/* set the login state */
+					logged_in = SESH_LOGGING_IN;
+
+					/* store the username we're attempting to login with
+						NOTE: we don't care if it's right or not, that'll be decided in PASS
+					*/
+					strcpy(username, argument);
+
+					/* get the username */
+					printf("[server]: client trying to login with username '%s'\r\n", argument);
+					sprintf(replyMsg, "331 Please specify the password for '%s'\r\n", username);
+				}
+
+				/* password command, session state should be set to logging in,
+					otherwise we break */
+				else if (strcmp(cmd, "pass") == 0) {
+					if(logged_in == SESH_LOGGING_IN) {
+
+						char *password = argument; 
+
+						/* we need to iterate and find the password to the corresponding
+							username to compare it against what the user passed in */
+						for (size_t k = 0; k < NUM_USERS; k++) {
+
+							/* here the password either matches or it doesn't */
+							if(strcmp(username, USERNAMES[k]) == 0) {
+
+								/* successful login */
+								if (strcmp(PASSWORDS[k], password) == 0) {
+
+									/* set the session state to logged in */
+									logged_in = SESH_LOGGED_IN;
+									break;
+								}
+							}
+						}
+						/* check if the login was successful */
+						if (logged_in == SESH_LOGGED_IN) {
+							printf("[server]: user '%s' logged in.\r\n", username);
+							sprintf(replyMsg, "230 Successfully logged in as '%s'\r\n", username);
+						}
+
+						/* set the failstate */
+						else {
+							printf("[server]: unsucessful login, check username or password\r\n");
+							strcpy(replyMsg, "430 Invalid username or password\r\n");
+							logged_in = SESH_LOGGED_OUT;
+						}
 					}
-				} 
+
+					/* incorrect session state to be calling PASS */
+					else {
+						printf("[server]: called pass before user\r\n");
+						strcpy(replyMsg, "503 Called user before pass\r\n");
+					}
+				}
 
 
-				/* basic command matching, future version should either use a switch or a prefix trie */ 
+				/* basic command matching, future version should either use a switch or a prefix trie */
 				else if(strcmp(cmd, "help") == 0) {
 					// valgrind should scrutinze this
 					help(replyMsg);
-				} 
+				}
 
 				else if(strcmp(cmd, "quit") == 0) {
 					/* logout here */
@@ -395,29 +537,31 @@ int main(const int argc, const char ** argv)
 					}
 					strcpy(replyMsg, OK_CLOSING_CONTROL_CONN);
 					should_quit = true;
-				} 
+				}
 
+				else if (strcmp(cmd, "stat") == 0) {
+					sprintf(replyMsg, "211 Type: ASCII, Mode: Stream\r\n");
+				}
 
 				/* Filesystem functions:
 				 	there are two classes of functions: passive and modifying
-					passive functions: only require read permission,					
+					passive functions: only require read permission,
 					modifying functions: require a non-guest user session to write to the file system
 
 					passive commands:
 						- ls
 						- cd
-						- pwd 
+						- pwd
 						- stat
 						- get/recv
 
 					modifying commands:
 						- rm
 						- rmdir
-						- mkdir 
-						- put/send 
-						
-				*/ 
-				
+						- mkdir
+						- put/send
+
+				*/
 
 				else if (strcmp(cmd, "pwd") == 0) {
 					get_cwd(replyMsg, current_dir);
@@ -425,13 +569,13 @@ int main(const int argc, const char ** argv)
 
 				else if (strcmp(cmd, "cd") == 0) {
 						cmd_status = chdir(argument);
-						
+
 						/* change directory was successful */
 						if (cmd_status == 0) {
 							strcpy(replyMsg, "200 change directory successful\r\n");
 							getcwd(current_dir, PATH_MAX);
 							printf("[server]: client changed directory to '%s'\r\n", current_dir);
-						} 
+						}
 
 						else {
 							error_msg = strerror(errno);
@@ -441,23 +585,18 @@ int main(const int argc, const char ** argv)
 						}
 				}
 
-				/* Returns the transfer mode of the FTP server */
-				else if (strcmp(cmd, "stat") == 0) {
-					strcpy(replyMsg, "200 Transfer mode: ASCII\r\n");
-					printf("[server]: returning status\r\n");
-				}
 
 				else if (strcmp(cmd, "mkdir") == 0) {
 
-					/* User + Group can read and write to directory, others may only read */ 					
-					mode_t directory_mode = 0664; 
+					/* User + Group can read, write, and execute in directory, others may only read & execute*/
+					mode_t directory_mode = 0775;
 
 					cmd_status = mkdir(argument, directory_mode);
-					
+
 					if(cmd_status == 0) {
 						printf("[server]: Created directory \"%s\" with mode %04o\r\n", argument, directory_mode);
 						strcpy(replyMsg, "212 Successfully created directory\r\n");
-					} 
+					}
 
 
 					/* errno is set */
@@ -466,7 +605,7 @@ int main(const int argc, const char ** argv)
 						fprintf(stderr, "[server]: could not create directory %s: %s\r\n", argument, error_msg);
 						strcpy(replyMsg, "550 ");
 						strcat(replyMsg, error_msg);
-						strcat(replyMsg, "\r\n");			
+						strcat(replyMsg, "\r\n");
 					}
 				}
 
@@ -474,7 +613,7 @@ int main(const int argc, const char ** argv)
 					printf("[server]: attempting to remove directory \"%s\"\r\n", argument);
 
 					cmd_status = rmdir(argument);
-					if (status == 0) {
+					if (cmd_status == 0) {
 						printf("[server]: successfully removed directory \"%s\"\r\n", argument);
 						strcpy(replyMsg, "200 directory removed\r\n");
 					}
@@ -485,16 +624,16 @@ int main(const int argc, const char ** argv)
 						fprintf(stderr, "[server]: failed to remove dir \"%s\": %s\r\n", argument, error_msg);
 						strcpy(replyMsg, "550 ");
 						strcat(replyMsg, error_msg);
-						strcat(replyMsg, "\r\n");			
+						strcat(replyMsg, "\r\n");
 
-					} 
+					}
 				}
 
 				/* this deletes files as well as directories */
 				else if (strcmp(cmd, "rm") == 0) {
 					printf("[server]: removing name \"%s\"\r\n", argument);
 					cmd_status = remove(argument);
-					
+
 					if (cmd_status == 0) {
 						printf("[server]: successfully removed \"%s\"\r\n", argument);
 						strcpy(replyMsg, "250 file successfully removed\r\n");
@@ -505,37 +644,78 @@ int main(const int argc, const char ** argv)
 						fprintf(stderr, "[server]: couldn't remove \"%s\": %s\r\n", argument, error_msg);
 						strcpy(replyMsg, "550 ");
 						strcat(replyMsg, error_msg);
-						strcat(replyMsg, "\r\n");	
+						strcat(replyMsg, "\r\n");
 					}
 				}
 
-				/* 
-					currently ls will break because 
+				/*
+					Server receives "recv" command, the client wants to receive a file.
+
+					The server now replies with the status of the file. Either it exists, or it doesnt.
+					If the file doesn't exist, then we simply respond with
+				*/
+				else if (strcmp(cmd, "recv") == 0) {
+
+					/* server needs to connect to client real quick */
+					// int data_status = clntConnect(SERVER_HOSTNAME, &data_socket);
+					/*
+					if (status != 0) {
+						fprintf(stderr, "[server]: received error code when connecting: %d\r\n", data_status);
+						strcpy(replyMsg, "425 Can't open data connection\r\n");
+					}
+
+					else {
+
+					}
+					*/
+
+					/*
+					FILE *file = NULL;
+
+					file = fopen(argument, "r");
+					if (file != NULL) {
+
+					}
+
+					cmd_status = fclose(file);
+					if(cmd_status == EOF) {
+						fprintf(stderr, "[server] couldn't close file \"%s\"\r\n", argument);
+					}
+					*/
+				}
+												/* At this point our command isn't implemented */
+				else {
+					printf("[server]: command '[%s]' not implemented\r\n", cmd);
+					strcpy(replyMsg, "202 Command not implemented\r\n");
+				}
+
+				/*
+					currently ls will break because
 					directories overflow the input buffer
-					and the client doesn't know that there's more data to listen for 
+					and the client doesn't know that there's more data to listen for
 				*/
 
-				/* only prints the outputs of the current directory 
+				/* only prints the outputs of the current directory
 				else if (strcmp(cmd, "ls") == 0) {
 					/*
-					DIR *working_dir_stream; 
+					DIR *working_dir_stream;
 					struct dirent *myfile;
-					// struct stat mystat;  // for filesize 
-	
-					// iterate through the directory stream & append all filenames to replymessage 
+					// struct stat mystat;  // for filesize
+
+					// iterate through the directory stream & append all filenames to replymessage
 					working_dir_stream = opendir(current_dir);
 
-					// make sure the stream is open before trying to read from it 
+					// make sure the stream is open before trying to read from it
 					if (working_dir_stream != NULL) {
 						strcat(replyMsg, "200 Command OK\r\n");
-						
+
 						/* keep track of how much has been written so we don't
-							write to space we're not allowed to 
+							write to space we're not allowed to
 						size_t written_length = strlen(replyMsg);
-						while((myfile = readdir(working_dir_stream)) != NULL && 
-							(strlen(replyMsg) + strlen(myfile->d_name) + 2 < BUFFER_LENGTH) ) 
-						{							
-							/* make sure we have enough space in the buffer 
+						while((myfile = readdir(working_dir_stream)) != NULL &&
+							(strlen(replyMsg) + strlen(myfile->d_name) + 2 < BUFFER_LENGTH) )
+						{
+							/* make sure we have enough space in the buffer
 							if (written_length + strlen(myfile->d_name) + 2 < BUFFER_LENGTH) {
 								strcat(replyMsg, myfile->d_name);
 								strcat(replyMsg, "\r\n");
@@ -546,29 +726,27 @@ int main(const int argc, const char ** argv)
 								closedir(working_dir_stream);
 							}
 						}
-						/* close the stream 
+						/* close the stream
 						closedir(working_dir_stream);
 					}
 					else {
 						printf("[server]: could not open directory \"%s\"\r\n", current_dir);
 						strcpy(replyMsg, ERR_INTERNAL_ERROR);
-						
-					}
-				
-				}*/
- 
-				/* At this point our command isn't implemented */ 
-				else {
-					printf("[server]: command '[%s]' not implemented\r\n", cmd);
-					strcpy(replyMsg, "202 Command not implemented\r\n");
-				}
 
-			} else {
-				/* the command isn't recognized */
-				strcpy(replyMsg, ERR_COMMAND_NOT_FOUND);
+					}
+
+				}*/
+
+			}
+
+			else {
+				if (strlen(replyMsg) == 0 || strcmp(replyMsg, "") == 0) { 
+					/* the command isn't recognized */
+					strcpy(replyMsg, ERR_COMMAND_NOT_FOUND);
+				}
 			}
 			/*
-			* ftp server sends only one reply message to the client for 
+			* ftp server sends only one reply message to the client for
 			* each command received in this implementation.
 			*/
 			/* strcpy(replyMsg,"200 cmd okay\r\r\n"); */
@@ -590,7 +768,7 @@ int main(const int argc, const char ** argv)
 
 		printf("[server] Closing control connection socket.\r\n");
 		close (ccSocket);  /* Close client control connection socket */
-		
+
 		// increment the connection number for now
 		connection_no++;
 	}
@@ -599,7 +777,7 @@ int main(const int argc, const char ** argv)
 	close(listenSocket);  /*close listen socket */
 	printf("[server] done\r\n");
 
-	if (status != 0) 
+	if (status != 0)
 		printf("[server] Server exited with non-zero status code: %d\r\n", status);
 
 	return (status);
@@ -647,7 +825,7 @@ int svcInitServer (
 	svcAddr.sin_port=htons(SERVER_FTP_PORT);    /* server listen port # */
 
 	/* bind (associate) the listen socket number with server IP and port#.
-	 * bind is a socket interface function 
+	 * bind is a socket interface function
 	 */
 	if(bind(sock,(struct sockaddr *)&svcAddr,sizeof(svcAddr))<0)
 	{
@@ -656,19 +834,19 @@ int svcInitServer (
 		return(ER_BIND_FAILED);	/* bind failed */
 	}
 
-	/* 
+	/*
 	 * Set listen queue length to 1 outstanding connection request.
 	 * This allows 1 outstanding connect request from client to wait
 	 * while processing current connection request, which takes time.
 	 * It prevents connection request to fail and client to think server is down
 	 * when in fact server is running and busy processing connection request.
 	 */
-	qlen=1; 
+	qlen=1;
 
 
-	/* 
+	/*
 	 * Listen for connection request to come from client ftp.
-	 * This is a non-blocking socket interface function call, 
+	 * This is a non-blocking socket interface function call,
 	 * meaning, server ftp execution does not block by the 'listen' funcgtion call.
 	 * Call returns right away so that server can do whatever it wants.
 	 * The TCP transport layer will continuously listen for request and
@@ -783,22 +961,22 @@ char * help(char *reply_str) {
 	}
 	strcpy(reply_str, response);
 	string_free(&response);
-	return reply_str; 
+	return reply_str;
 }
 
 
 char * get_cwd(char *reply, char *cd_buffer) {
-	/* to check if the getcwd call worked */ 
-	char *pstr = NULL; 
+	/* to check if the getcwd call worked */
+	char *pstr = NULL;
 
 	if ((pstr = getcwd(cd_buffer, PATH_MAX)) == NULL) {
 		printf("[server]: couldn't write the working directory to buf\r\n");
 		strcpy(reply, ERR_INTERNAL_ERROR);
-	} else { 
+	} else {
 		char *temp = NULL; /* dynamic string to be writing to */
-		string_init(&temp); 
-		string_set(&temp, "257 \""); 
-		
+		string_init(&temp);
+		string_set(&temp, "257 \"");
+
 		/* copy the contents from this segment into the dynamic string */
 		dyn_concat(&temp, cd_buffer);
 		dyn_concat(&temp, "\" is your current location\r\n");
@@ -811,25 +989,5 @@ char * get_cwd(char *reply, char *cd_buffer) {
 	}
 	return reply;
 }
-
-
-char * ls_dir(char *reply_str, char *dir_buf, size_t buf_size) {
-	DIR *my_dir = NULL;
-	struct dirent *tmp_file;
-}
-
-
-/* TODO: implement user sessions */
-int login(const char *username, const char *pword, const int allow_guest, int *logged_in) {
-	if(allow_guest) {
-		printf("[server] logged in as %s\r\n", USER_GUEST);
-		*logged_in = SESH_GUEST;
-	} else {
-		printf("[server] user login not implemented yet\r\n");
-		*logged_in = SESH_LOGGED_OUT;
-	}
-	return *logged_in;
-}
-
 
 
