@@ -25,7 +25,7 @@ extern int errno;
 
 
 #define SERVER_FTP_PORT 4200
-
+#define DATA_CONNECTION_FTP_PORT 4201
 
 /* Error and OK codes */
 #define OK 0
@@ -38,17 +38,30 @@ extern int errno;
 #define ER_ACCEPT_FAILED -7
 
 /* succ hahaha */
+#define OK_OPENING_DATA_SOCK "150 File status okay; about to open data connection.\r\n"
+
 #define OK_SERVER_SUCC "200 The requested action has been successfully completed.\r\n"
 #define OK_HELP "214 List of server commands is as follows:\r\n"
 #define OK_CLOSING_CONTROL_CONN "221 Service closing control connection.\r\n"
+#define OK_LOGIN_SUCC "230 User logged in\r\n"
+#define OK_FILE_ACTION_COMPLETE "250 Requested file action okay, completed.\r\n"
+#define OK_CHANGE_DIRECTORY "257 changed directory to '%s'\r\n"
+#define OK_PRINT_WORKING_DIRECTORY "257 '%s' is your current directory\r\n"
+#define OK_TRANSFER_SUCC_CLOSE_DATA "226 Closing data connection. Requested file action successful.\r\n"
+
+
 #define OK_USERNAME_NEED_PWORD "331 password required for %s\r\n"
+
+#define ERR_CANT_OPEN_CONNECTION "425 Can't open data connection.\r\n"
+#define ERR_TRANSFER_ABORTED "426 Connection closed; transfer aborted\r\n"
+#define ERR_INTERNAL_ERROR "451 Requested action aborted. Local error in processing.\r\n"
+#define ERR_INVALID_LOGIN "430 Invalid username or password\r\n"
 
 #define ERR_COMMAND_NOT_FOUND "500 Syntax error, command unrecognized and the requested action did not take place. This may include errors such as command line too long.\r\n"
 #define ERR_PARAM_SYNTAX_ERR "501 Syntax error in parameters or arguments.\r\n"
 #define ERR_MISSING_ARGUMENT "501 No argument provided for command.\r\n"
-#define ERR_FAILED_TO_LOGIN "530 Failed to login\r\n"
 #define ERR_NOT_LOGGED_IN "530 Not Logged In.\r\n"
-#define ERR_INTERNAL_ERROR "451 Requested action aborted. Local error in processing.\r\n"
+#define ERR_FILE_UNAVAILABLE "550 Requested action not taken. File unavailable (e.g., file not found, no access).\r\n"
 
 #define MAX_CONNECTION_COUNT 1
 
@@ -215,6 +228,7 @@ int main(const int argc, const char ** argv)
 	int ccSocket;        /* Control connection socket - to be used in all client communication */
 	int data_socket;  /* data connection socket */
 	int status;
+	char buffer[100]; 	/* data buffer used for reading/writing file over a TCP connection */
 	int connection_no = 0; /* for exiting after a set amount of connections */
 
 	/* login settings */
@@ -332,6 +346,7 @@ int main(const int argc, const char ** argv)
 			bool requires_args = false;
 			bool valid_perms = false;
 
+			printf("[server]: awaiting message\r\n");
 			/* Receive client ftp commands until */
 			status=receiveMessage(ccSocket, userCmd, sizeof(userCmd), &msgSize);
 			if(status < 0)
@@ -340,7 +355,7 @@ int main(const int argc, const char ** argv)
 				printf("[server] Server ftp is terminating.\r\n");
 				break;
 			}
-
+			printf("[server]: received message: %s\r\n", userCmd);
 			/*
 				Parse the input received from the client
 			*/
@@ -501,13 +516,13 @@ int main(const int argc, const char ** argv)
 						/* check if the login was successful */
 						if (logged_in == SESH_LOGGED_IN) {
 							printf("[server]: user '%s' logged in.\r\n", username);
-							sprintf(replyMsg, "230 Successfully logged in as '%s'\r\n", username);
+							strcpy(replyMsg, OK_LOGIN_SUCC);
 						}
 
 						/* set the failstate */
 						else {
 							printf("[server]: unsucessful login, check username or password\r\n");
-							strcpy(replyMsg, "430 Invalid username or password\r\n");
+							strcpy(replyMsg, ERR_INVALID_LOGIN);
 							logged_in = SESH_LOGGED_OUT;
 						}
 					}
@@ -572,8 +587,8 @@ int main(const int argc, const char ** argv)
 
 						/* change directory was successful */
 						if (cmd_status == 0) {
-							strcpy(replyMsg, "200 change directory successful\r\n");
 							getcwd(current_dir, PATH_MAX);
+							sprintf(replyMsg, OK_CHANGE_DIRECTORY, current_dir);
 							printf("[server]: client changed directory to '%s'\r\n", current_dir);
 						}
 
@@ -603,9 +618,7 @@ int main(const int argc, const char ** argv)
 					else if (cmd_status == -1) {
 						error_msg = strerror(errno);
 						fprintf(stderr, "[server]: could not create directory %s: %s\r\n", argument, error_msg);
-						strcpy(replyMsg, "550 ");
-						strcat(replyMsg, error_msg);
-						strcat(replyMsg, "\r\n");
+						strcpy(replyMsg, ERR_FILE_UNAVAILABLE);
 					}
 				}
 
@@ -615,16 +628,14 @@ int main(const int argc, const char ** argv)
 					cmd_status = rmdir(argument);
 					if (cmd_status == 0) {
 						printf("[server]: successfully removed directory \"%s\"\r\n", argument);
-						strcpy(replyMsg, "200 directory removed\r\n");
+						strcpy(replyMsg, OK_FILE_ACTION_COMPLETE);
 					}
 
 					/* status is -1 and errno is set so we return system information */
 					else {
 						error_msg = strerror(errno);
 						fprintf(stderr, "[server]: failed to remove dir \"%s\": %s\r\n", argument, error_msg);
-						strcpy(replyMsg, "550 ");
-						strcat(replyMsg, error_msg);
-						strcat(replyMsg, "\r\n");
+						strcpy(replyMsg, ERR_FILE_UNAVAILABLE);
 
 					}
 				}
@@ -636,15 +647,13 @@ int main(const int argc, const char ** argv)
 
 					if (cmd_status == 0) {
 						printf("[server]: successfully removed \"%s\"\r\n", argument);
-						strcpy(replyMsg, "250 file successfully removed\r\n");
+						strcpy(replyMsg, OK_FILE_ACTION_COMPLETE);
 					}
 
 					else {
 						error_msg = strerror(errno);
 						fprintf(stderr, "[server]: couldn't remove \"%s\": %s\r\n", argument, error_msg);
-						strcpy(replyMsg, "550 ");
-						strcat(replyMsg, error_msg);
-						strcat(replyMsg, "\r\n");
+						strcpy(replyMsg, ERR_FILE_UNAVAILABLE);
 					}
 				}
 
@@ -655,35 +664,174 @@ int main(const int argc, const char ** argv)
 					If the file doesn't exist, then we simply respond with
 				*/
 				else if (strcmp(cmd, "recv") == 0) {
-
-					/* server needs to connect to client real quick */
-					// int data_status = clntConnect(SERVER_HOSTNAME, &data_socket);
-					/*
-					if (status != 0) {
-						fprintf(stderr, "[server]: received error code when connecting: %d\r\n", data_status);
-						strcpy(replyMsg, "425 Can't open data connection\r\n");
+					
+					/* establish the data connection */
+					printf("[server]: connecting to the client\r\n");
+					status = clntConnect(SERVER_HOSTNAME, &data_socket);
+					if (status != OK) {
+						fprintf(stderr, "[server]: Unable to establish data connection\r\n");
+						strcpy(replyMsg, ERR_CANT_OPEN_CONNECTION);
 					}
-
+					
 					else {
+						printf("[server]: Established data connectioned\r\n");
+						
+						/* attempt to open the filestream to read from */
+						FILE *fd = NULL; /* for accessing the file descriptor */
+						fd = fopen(argument, "r");
 
+						if(fd != NULL) { 
+							/* inform the client that the file is open and we can proceed */
+							strcpy(replyMsg, OK_OPENING_DATA_SOCK);
+							printf("[server]: sending client a message: '%s'\r\n", replyMsg);
+							status = sendMessage(ccSocket, replyMsg, strlen(replyMsg) + 1);
+
+							printf("[server]: message sent\r\n");
+							printf("[server]: reading file\r\n");
+
+							int bytesread = 0; 
+							/* read from the file and write to the data connection 
+								until there's nothing left to write 
+							 */
+							while(!feof(fd)) {
+								bytesread = fread(buffer, sizeof(char), sizeof(buffer), fd);
+								printf("[server]: %d bytes read\r\n",bytesread);
+								sendMessage(data_socket, buffer, bytesread);
+							}
+
+							printf("[server]: finished reading from file\n");
+							strcpy(replyMsg, OK_TRANSFER_SUCC_CLOSE_DATA);
+							fclose(fd);
+						} 
+						/* we have the data connection open but we were unable to open the file */
+						else {
+							fprintf(stderr, "[server]: couldn't open file %s\r\n", argument);
+							strcpy(replyMsg, ERR_FILE_UNAVAILABLE);
+							status = sendMessage(ccSocket, replyMsg, strlen(replyMsg) + 1);
+						}
+						printf("[server]: done with data connection, closing\r\n");
+						close(data_socket);
+
+						strcpy(replyMsg, OK_FILE_ACTION_COMPLETE);
 					}
-					*/
-
-					/*
-					FILE *file = NULL;
-
-					file = fopen(argument, "r");
-					if (file != NULL) {
-
-					}
-
-					cmd_status = fclose(file);
-					if(cmd_status == EOF) {
-						fprintf(stderr, "[server] couldn't close file \"%s\"\r\n", argument);
-					}
-					*/
 				}
-												/* At this point our command isn't implemented */
+
+
+				/* send command, the user uploads a file and the server saves it */
+				else if (strcmp(cmd, "send") == 0) {
+					
+					/* establish the data connection */
+					printf("[server]: connecting to the client\r\n");
+					status = clntConnect(SERVER_HOSTNAME, &data_socket);
+					if (status != OK) {
+						fprintf(stderr, "[server]: Unable to establish data connection\r\n");
+						strcpy(replyMsg, ERR_CANT_OPEN_CONNECTION);
+						sendMessage(ccSocket, replyMsg, strlen(replyMsg) + 1);
+					}
+					
+					else {
+						printf("[server]: Established data connectioned\r\n");
+					
+						/* We need to get the file's name so we don't write to the same directory */
+						char *fname = NULL;
+						if (strrchr(argument, '/')) 
+							fname = strrchr(argument, '/') + 1;
+						else 
+							fname = argument; 
+						/* attempt to open the filestream to read from */
+						FILE *fd = NULL; /* for accessing the file descriptor */
+						fd = fopen(fname, "w");
+
+						if(fd != NULL) { 
+							/* inform the client that the file is open and we can proceed */
+							strcpy(replyMsg, OK_OPENING_DATA_SOCK);
+							printf("[server]: file is ready for writing: '%s'\r\n", replyMsg);
+							status = sendMessage(ccSocket, replyMsg, strlen(replyMsg) + 1);
+							printf("[server]: notified client\r\n");
+
+							do {
+								printf("[server]: receiving next bytes\r\n");
+								status = receiveMessage(data_socket, buffer, sizeof(buffer), &msgSize);
+								printf("[server]: received %d bytes\r\n", msgSize);
+								fwrite(buffer, sizeof(char), msgSize, fd);
+							} while((msgSize > 0) && (status == 0));
+							printf("[server]: closing file");
+							fclose(fd);
+							strcpy(replyMsg, OK_TRANSFER_SUCC_CLOSE_DATA);
+						} 
+						/* we have the data connection open but we were unable to open the file */
+						else {
+							fprintf(stderr, "[server]: couldn't open file %s\r\n", fname);
+							strcpy(replyMsg, ERR_FILE_UNAVAILABLE);
+							status = sendMessage(ccSocket, replyMsg, strlen(replyMsg) + 1);
+						}
+						printf("[server]: done with data connection, closing\r\n");
+						close(data_socket);
+
+						strcpy(replyMsg, OK_FILE_ACTION_COMPLETE);
+					}
+				}
+
+				else if (strcmp(cmd, "ls") == 0) {
+					
+					/* establish the data connection */
+					printf("[server]: connecting to the client\r\n");
+					status = clntConnect(SERVER_HOSTNAME, &data_socket);
+					if (status != OK) {
+						fprintf(stderr, "[server]: Unable to establish data connection\r\n");
+						strcpy(replyMsg, ERR_CANT_OPEN_CONNECTION);
+					}
+					
+					/* We can communicate with the client */
+					else {
+						printf("[server]: Established data connectioned\r\n");
+						
+						/* read the contents of the local directory and write them into a file */
+						cmd_status = system("ls -al > /tmp/lsoutput.txt");
+						if (status == 0) {
+							/* attempt to open the filestream to read from */
+							FILE *fd = NULL; /* for accessing the file descriptor */
+							fd = fopen("/tmp/lsoutput.txt", "r");
+
+							if(fd != NULL) { 
+								/* inform the client that the file is open and we can proceed */
+								strcpy(replyMsg, OK_OPENING_DATA_SOCK);
+								printf("[server]: sending client a message: '%s'\r\n", replyMsg);
+								status = sendMessage(ccSocket, replyMsg, strlen(replyMsg) + 1);
+
+								printf("[server]: message sent\r\n");
+								printf("[server]: reading file\r\n");
+
+								int bytesread = 0; 
+								/* read from the file and write to the data connection 
+									until there's nothing left to write 
+								*/
+								while(!feof(fd)) {
+									bytesread = fread(buffer, sizeof(char), sizeof(buffer), fd);
+									printf("[server]: %d bytes read\r\n",bytesread);
+									sendMessage(data_socket, buffer, bytesread);
+								}
+
+								printf("[server]: finished reading from file\n");
+								strcpy(replyMsg, OK_TRANSFER_SUCC_CLOSE_DATA);
+								fclose(fd);
+							} 
+						} else {
+							strcpy(replyMsg, ERR_INTERNAL_ERROR);
+							
+							perror(strerror(errno));
+						}
+						printf("[server] removing list output\r\n");
+						remove("/tmp/lsoutput.tmp");
+						printf("[server]: done with data connection, closing\r\n");
+						close(data_socket);
+
+						strcpy(replyMsg, OK_FILE_ACTION_COMPLETE);
+					}
+				}
+
+
+				/* At this point our command isn't implemented */
 				else {
 					printf("[server]: command '[%s]' not implemented\r\n", cmd);
 					strcpy(replyMsg, "202 Command not implemented\r\n");
@@ -756,8 +904,9 @@ int main(const int argc, const char ** argv)
 			;	/* Added 1 to include NULL character in */
 					/* the reply string strlen does not count NULL character */
 			/* clear out the reply string for the next run */
+			printf("[server]: sending client a message: %s\r\n", replyMsg);
 			status=sendMessage(ccSocket,replyMsg,strlen(replyMsg) + 1);
-
+			printf("[server]: message sent\r\n");
 			if(status < 0) {
 				printf("[server] received negative return status when sending a message: %d\r\n", status);
 				should_quit = true;
@@ -782,6 +931,78 @@ int main(const int argc, const char ** argv)
 
 	return (status);
 }
+
+int clntConnect (
+	char *serverName, /* server IP address in dot notation (input) */
+	int *s 		  /* control connection socket number (output) */
+	)
+{
+	int sock;	/* local variable to keep socket number */
+	int option = 1; 	/* socket option to reuse the address */
+	struct sockaddr_in clientAddress;  	/* local client IP address */
+	struct sockaddr_in serverAddress;	/* server IP address */
+	struct hostent *serverIPstructure;	/* host entry having server IP address in binary */
+
+
+	/* Get IP address os server in binary from server name (IP in dot natation) */
+	if((serverIPstructure = gethostbyname(serverName)) == NULL)
+	{
+		printf("%s is unknown server. \n", serverName);
+		return (ER_INVALID_HOST_NAME);  /* error return */
+	}
+
+	/* Create control connection socket */
+	if((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	{
+		perror("cannot create socket ");
+		return (ER_CREATE_SOCKET_FAILED);	/* error return */
+	}
+
+	/* set the address to be reused so there are no timeout errors */
+	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
+
+	/* initialize client address structure memory to zero */
+	memset((char *) &clientAddress, 0, sizeof(clientAddress));
+
+	/* Set local client IP address, and port in the address structure */
+	clientAddress.sin_family = AF_INET;	/* Internet protocol family */
+	clientAddress.sin_addr.s_addr = htonl(INADDR_ANY);  /* INADDR_ANY is 0, which means */
+						 /* let the system fill client IP address */
+	clientAddress.sin_port = 0;  /* With port set to 0, system will allocate a free port */
+			  /* from 1024 to (64K -1) */
+
+	/* Associate the socket with local client IP address and port */
+	if(bind(sock,(struct sockaddr *)&clientAddress,sizeof(clientAddress))<0)
+	{
+		perror("cannot bind");
+		close(sock);
+		return(ER_BIND_FAILED);	/* bind failed */
+	}
+
+
+	/* Initialize serverAddress memory to 0 */
+	memset((char *) &serverAddress, 0, sizeof(serverAddress));
+
+	/* Set ftp server ftp address in serverAddress */
+	serverAddress.sin_family = AF_INET;
+	memcpy((char *) &serverAddress.sin_addr, serverIPstructure->h_addr,
+			serverIPstructure->h_length);
+	serverAddress.sin_port = htons(DATA_CONNECTION_FTP_PORT);
+
+	/* Connect to the server */
+	if (connect(sock, (struct sockaddr *) &serverAddress, sizeof(serverAddress)) < 0)
+	{
+		perror("Cannot connect to server ");
+		close (sock); 	/* close the control connection socket */
+		return(ER_CONNECT_FAILED);  	/* error return */
+	}
+
+
+	/* Store listen socket number to be returned in output parameter 's' */
+	*s=sock;
+
+	return(OK); /* successful return */
+}  // end of clntConnect() */
 
 
 
@@ -973,19 +1194,10 @@ char * get_cwd(char *reply, char *cd_buffer) {
 		printf("[server]: couldn't write the working directory to buf\r\n");
 		strcpy(reply, ERR_INTERNAL_ERROR);
 	} else {
-		char *temp = NULL; /* dynamic string to be writing to */
-		string_init(&temp);
-		string_set(&temp, "257 \"");
-
-		/* copy the contents from this segment into the dynamic string */
-		dyn_concat(&temp, cd_buffer);
-		dyn_concat(&temp, "\" is your current location\r\n");
-
-		/* copy formatted string into the reply */
-		strcpy(reply, temp);
-
-		/* release the working data */
-		string_free(&temp);
+		char *temp = NULL; /* dynamic string to be writing to */;
+		printf("[server]: sprintf-ing current directory to replyStr\r\n");
+		sprintf(reply, OK_PRINT_WORKING_DIRECTORY, cd_buffer);
+		printf("[server]: done\r\n");
 	}
 	return reply;
 }
