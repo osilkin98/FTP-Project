@@ -1,7 +1,47 @@
-// krishna how did you forget this...
 /* 
+ * By: Oleg Silkin
+ * Computer Networking - 477 - HW2
+ * 
  * Client FTP program
  *
+ * This program connects to the FTP Unix Server
+ * 
+ * The client connects to the implemented FTP server running on port 4200 and 
+ * communicates with it through the control connection. 
+ * User enters input through STDIN and the user input is interpreted as <cmd><space><argument> 
+ * where <space> is any series of whitespace character separating text. 
+ * 
+ * Input is tokenized only once so any amount of spaces after the start of <argument> is considered to be 
+ * part of the argument, unless it is not followed by anymore text. 
+ * 
+ * FTP Server is using a state transition system to maintain login state, so the 
+ * client uses this information before initiating file transfer through the data connection, and the server does the same. 
+ * 
+ * The implemented commands are:
+    user <username>
+	pass <password>
+	mkdir <directory>
+	rmdir <directory>
+	cd <directory>
+	rm <filename>
+	ls
+	pwd
+	send <filepath>
+	recv <filepath>
+	stat
+	quit
+	help
+ * 
+ * The commands available to the user before logging in are help, quit, user, pass, and stat.
+ * 
+ * send/recv/ls are implemented to use a data connection, 
+ * and require an additional message to be sent through the control connection
+ * to dictate the program's control flow. 
+ * 
+ * Server's reply codes are extracted from the response and used to dictate what should happen on the client end,
+ * which stops us from opening unwanted/unutilized data connections with the server. 
+ * 
+ * 
  * NOTE: Starting homework #2, add more comments here describing the overall function
  * performed by server ftp program
  * This includes, the list of ftp commands processed by server ftp.
@@ -90,18 +130,7 @@ int main(void)
 	char buff[FILE_BUFFER_SIZE]; /* file buffer for writing/reading from the TCP socket */
 	bool logged_in = false;  /* store login state from FTP server */
 
-
-	/*
-	 * NOTE: without \n at the end of format string in printf,
-         * UNIX will buffer (not flush)
-	 * output to display and you will not see it on monitor.
- 	 */
-	printf("[client]: Started execution of client ftp\n");
-
-
 	 /* Connect to client ftp*/
-	printf("[client]: Calling clntConnect to connect to the server\n");	/* changed text */
-
 	status=clntConnect("localhost", &ccSocket);
 	if(status != 0)
 	{
@@ -117,19 +146,13 @@ int main(void)
 
 	/* Now that the client connected to the FTP server, 
 		we can initialize the clientside data connection */
-	printf("[client]: Starting Data Connection\r\n");
 	status = svcInitServer(&client_listen_socket);
 	if (status != 0) 
 	{
 		fprintf(stderr, "[client]: could not start data connection server\r\n");
 		exit(status);
 	}
-	
-	printf("[client]: data connection bound on listen socket %d\r\n", client_listen_socket);
-	printf("[client]: intialized server for data connections, we can safely proceed\r\n");
-	
 
-	
 	/* 
 	 * Read an ftp command with argument, if any, in one line from user into userCmd.
 	 * Copy ftp command part into ftpCmd and the argument into arg array.
@@ -206,7 +229,6 @@ int main(void)
 		if(logged_in && strcmp(cmd, "recv") == 0) {
 			if (argument == NULL) {
 				printf("[client]: no argument provided, skipping\r\n");
-
 			}
 			else {
 	
@@ -223,15 +245,12 @@ int main(void)
 					fprintf(stderr, "[client]: could not connect to server\r\n");
 					break;
 				} 
-
 				/* receive the status from the server */
 				status = receiveMessage(ccSocket, replyMsg, sizeof(replyMsg), &msgSize);				
 				clntExtractReplyCode(replyMsg, &ftp_code);
-
 				if (ftp_code == FTP_FILE_OK_OPENING_DATA_SOCK) {
 					/* open the output file to be written to */
 					FILE *outfile = fopen(fname, "w");
-
 					if(outfile != NULL) {
 						/* write until there's nothing left */
 						do {
@@ -248,70 +267,57 @@ int main(void)
 				else {
 					printf("[client]: server responded with status code %d\r\n", ftp_code);
 				}
-
 				close(data_socket); /* close the data connection */
 			}
 		}
-
+		
+		/* send requires having been logged into the server and so a check is used to prevent
+		 	unnecessary data connections from taking place */
 		if(logged_in && strcmp(cmd, "send") == 0) {
 			data_socket = accept(client_listen_socket, NULL, NULL);
 			if (data_socket < 0) {
 				fprintf(stderr, "[client]: could not connect to server\r\n");
 				break;
 			} 
-
 			/* receive the status from the server */
 			status = receiveMessage(ccSocket, replyMsg, sizeof(replyMsg), &msgSize);				
 			clntExtractReplyCode(replyMsg, &ftp_code);
-
 			/*
 				we already know that the file in argument exists, so we just need to 
 				make sure that the server can proceed with the write properly 
 				
 			*/
-			
 			if(ftp_code == FTP_FILE_OK_OPENING_DATA_SOCK) {
-				printf("[client]: opened ftp OK, reading file\n");
 				FILE *outfile = fopen(argument, "r");
 				int bytesread = 0;
 				while(!feof(outfile)) {
 					bytesread = fread(buff, sizeof(char), sizeof(buff), outfile);
-					printf("[client]: %d bytes read\r\n",bytesread);
 					sendMessage(data_socket, buff, bytesread);
 				}
-				printf("[client]: finished reading from file\n");
 				fclose(outfile);
 			} 
-
 			else {
 				printf("[client]: server responded with status code %d\r\n", ftp_code);
-
 			}
-			printf("[client]: closing data socket\r\n");
 			close(data_socket);
-
 		}
 
 
+		/* LS requires login so the client shouldn't blindly open a data connection */
 		if(logged_in && strcmp(cmd, "ls") == 0) {
-			
 			/* accept data connection */ 
 			data_socket = accept(client_listen_socket, NULL, NULL);
 			if (data_socket < 0) {
 				fprintf(stderr, "[client]: could not connect to server\r\n");
 				break;
 			} 
-
 			/* receive the status from the server */
 			status = receiveMessage(ccSocket, replyMsg, sizeof(replyMsg), &msgSize);				
 			clntExtractReplyCode(replyMsg, &ftp_code);
-
 			if (ftp_code == FTP_FILE_OK_OPENING_DATA_SOCK) {
-
 				char const* tmp_name = "lsoutput.tmp";
 				/* open the output file to be written to */
 				FILE *outfile = fopen(tmp_name, "w");
-
 				if(outfile != NULL) {
 					/* write until there's nothing left */
 					do {
@@ -319,14 +325,12 @@ int main(void)
 						fwrite(buff, sizeof(char), msgSize, outfile);
 					} while((msgSize > 0) && (status == 0));
 					fclose(outfile);	/* close file stream */
-
 					outfile = fopen(tmp_name, "r");
 					char s;
 					while((s=fgetc(outfile))!=EOF) {
    						printf("%c",s);
 					}
 					printf("\n");
-
 					fclose(outfile);
 					remove(tmp_name);
 				} 
@@ -335,35 +339,24 @@ int main(void)
 					fprintf(stderr, "[client]: Couldn't open file descriptor for '%s'\r\n", tmp_name);
 				}
 			} 
-			
 			else {
 				printf("[client]: server responded with status code %d\r\n", ftp_code);
 			}
-
 			close(data_socket); /* close the data connection */
 		}
-
-
-
-		printf("[client]: awaiting on a message\r\n");
 		/* Receive reply message from the the server */
 		status = receiveMessage(ccSocket, replyMsg, sizeof(replyMsg), &msgSize);
 		clntExtractReplyCode(replyMsg, &ftp_code);
-
-		printf("[client]: received %d bytes from the server\r\n", msgSize);
-
+		
 		/* handle the server response codes */ 
 		switch (ftp_code)
 		{
-		case FTP_SUCCESSFUL_LOGIN:	/* code 230, can be either logged in or logged out */
-			logged_in = !logged_in;	/* flip the login state */ 
-			break;
-
-		default:
-			break;
+			case FTP_SUCCESSFUL_LOGIN:	/* code 230, can be either logged in or logged out */
+				logged_in = !logged_in;	/* flip the login state */ 
+				break;
+			default:
+				break;
 		}
-		
-
 		if(status != OK)
 		{
 		    break;
@@ -375,16 +368,8 @@ int main(void)
 	/* 
 		Terminate socket connections 
 	*/
-
-	printf("[client]: Closing data connection\r\n");
 	close(client_listen_socket);
-
-
-	printf("Closing control connection \n");
 	close(ccSocket);  /* close control connection socket */
-
-	printf("Exiting client main \n");
-
 	return (status);
 
 }  /* end main() */
@@ -668,7 +653,6 @@ int receiveDataMessage (
 	int *msgSize 	/* size of the received msg in octet */
 	)
 {
-	int i;
 
 	*msgSize=recv(s,buffer,bufferSize,0); /* socket interface call to receive msg */
 
